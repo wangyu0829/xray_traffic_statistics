@@ -45,14 +45,18 @@ class NetworkCollector:
                 '-T', 'fields',  # 字段格式输出
                 '-e', 'frame.len',  # 数据包长度
                 '-e', 'ip.dst',  # 目标IP
+                '-e', 'ip.src',  # 源IP
                 '-e', 'tcp.dstport',  # 目标端口
+                '-e', 'tcp.srcport',  # 源端口
                 '-e', 'udp.dstport',  # UDP目标端口
+                '-e', 'udp.srcport',  # UDP源端口
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
                 '-e', 'http.host',  # HTTP主机名
                 '-e', 'http.request.uri',  # HTTP请求URI
                 '-e', 'ftp.request.command',  # FTP命令
                 '-E', 'separator=\t',  # 设置字段分隔符
-                '-Y', 'ip'  # 捕获所有IP数据包
+                '-Y', f'port {self.port}',  # 只捕获指定端口的数据包
+                '-l'  # 行缓冲模式
             ]
             tshark_process = subprocess.Popen(
                 tshark_cmd,
@@ -70,12 +74,17 @@ class NetworkCollector:
             def pipe_data():
                 buffer_size = 1024 * 1024  # 1MB缓冲区
                 try:
+                    import select
+                    import time
                     while True:
-                        # 使用select来监控管道状态
-                        import select
-                        readable, _, _ = select.select([tcpdump_process.stdout], [], [], 1.0)
+                        # 使用select来监控管道状态，增加超时处理
+                        readable, _, _ = select.select([tcpdump_process.stdout], [], [], 0.5)
                         
                         if not readable:
+                            # 检查进程状态
+                            if tcpdump_process.poll() is not None:
+                                print("tcpdump进程已结束")
+                                break
                             continue
                             
                         try:
@@ -83,24 +92,33 @@ class NetworkCollector:
                             if not data:
                                 break
                                 
-                            # 分块写入数据，避免管道阻塞
+                            # 分块写入数据，使用更小的块大小
+                            chunk_size = 32768  # 32KB
                             total_written = 0
                             while total_written < len(data):
                                 try:
-                                    written = tshark_process.stdin.write(data[total_written:])
+                                    chunk = data[total_written:total_written + chunk_size]
+                                    written = tshark_process.stdin.write(chunk)
                                     if written is None:
-                                        break
+                                        time.sleep(0.01)  # 短暂暂停，避免CPU过载
+                                        continue
                                     total_written += written
                                     tshark_process.stdin.flush()
                                 except IOError as e:
                                     if e.errno == 32:  # Broken pipe
                                         print("tshark进程已关闭管道连接")
                                         return
+                                    elif e.errno in (11, 35):  # Resource temporarily unavailable
+                                        time.sleep(0.01)
+                                        continue
                                     raise
                         except IOError as e:
                             if e.errno == 32:  # Broken pipe
                                 print("tcpdump进程已关闭管道连接")
                                 break
+                            elif e.errno in (11, 35):  # Resource temporarily unavailable
+                                time.sleep(0.01)
+                                continue
                             raise
                 except Exception as e:
                     print(f"数据传输过程中发生错误: {str(e)}")
