@@ -47,7 +47,11 @@ class NetworkCollector:
 
             # 解析捕获的数据
             print("开始解析捕获的数据...")
-            self._parse_capture_data(process.stdout)
+            stdout_data, stderr_data = process.communicate()
+            if stderr_data:
+                print(f"tcpdump错误输出: {stderr_data.decode()}")
+            if stdout_data:
+                self._parse_capture_data(stdout_data)
 
         except subprocess.CalledProcessError as e:
             print(f"执行tcpdump命令失败: {str(e)}")
@@ -60,27 +64,32 @@ class NetworkCollector:
 
     def _parse_capture_data(self, capture_data):
         print("使用tshark解析tcpdump输出数据...")
+        print(f"捕获的数据大小: {len(capture_data)} 字节")
         cmd = [
             'tshark',
             '-r', '-',  # 从标准输入读取
             '-T', 'fields',  # 字段格式输出
             '-e', 'frame.len',  # 数据包长度
-            '-e', 'tls.handshake.extensions_server_name'  # SNI字段（域名）
+            '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
+            '-2'  # 使用Wireshark 2.x 版本的解析引擎
         ]
         print(f"执行命令: {' '.join(cmd)}")
 
         try:
             process = subprocess.Popen(
                 cmd,
-                stdin=capture_data,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
+            stdout_data, stderr_data = process.communicate(input=capture_data)
+            if stderr_data:
+                print(f"tshark错误输出: {stderr_data.decode()}")
             print("tshark进程已启动")
 
             # 处理tshark输出
             record_count = 0
-            for line in process.stdout:
+            for line in stdout_data.splitlines():
                 fields = line.decode().strip().split('\t')
                 if len(fields) == 2:
                     packet_len, domain = fields
