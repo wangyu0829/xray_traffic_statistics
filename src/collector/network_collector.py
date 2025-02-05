@@ -12,6 +12,23 @@ class NetworkCollector:
         self.interface = interface
         self.port = port
         self._traffic_data: Dict[str, List[TrafficRecord]] = {}
+        # 定义字段名列表
+        self.field_names = [
+            'packet_len',      # 数据包长度
+            'ip_dst',          # 目标IP
+            'ip_src',          # 源IP
+            'tcp_dstport',     # TCP目标端口
+            'tcp_srcport',     # TCP源端口
+            'udp_dstport',     # UDP目标端口
+            'udp_srcport',     # UDP源端口
+            'sni',             # TLS SNI
+            'http_host',       # HTTP主机名
+            'dns_name',        # DNS查询名称
+            'http_uri',        # HTTP URI
+            'http_content_type', # HTTP内容类型
+            'http_user_agent',  # HTTP User Agent
+            'frame_protocols'   # 协议栈
+        ]
 
     def start_capture(self, duration: int = 60) -> Dict[str, List[TrafficRecord]]:
         print(f"开始在接口 {self.interface} 上捕获端口 {self.port} 的流量数据...")
@@ -230,8 +247,9 @@ class NetworkCollector:
                     decoded_line = line.decode()
                     fields = decoded_line.strip().split('\t')
                     
+                    # 使用类的 field_names
                     values = {}
-                    for i, name in enumerate(field_names):
+                    for i, name in enumerate(self.field_names):
                         values[name] = fields[i].strip() if i < len(fields) and fields[i].strip() else ""
                     
                     traffic_type = self._determine_traffic_type(values)
@@ -242,6 +260,7 @@ class NetworkCollector:
                         print(f"\n处理记录 {line_num}:")
                         print(f"域名: {domain}")
                         print(f"流量类型: {traffic_type}")
+                        print(f"数据包大小: {values['packet_len']} 字节")
                     
                     if domain and values['packet_len'].isdigit():
                         bytes_len = int(values['packet_len'])
@@ -272,10 +291,10 @@ class NetworkCollector:
 
     def _determine_traffic_type(self, values):
         """确定流量类型"""
-        protocols = values.get('frame.protocols', '').lower()
+        protocols = values.get('frame_protocols', '').lower()
         content_type = values.get('http_content_type', '').lower()
         uri = values.get('http_uri', '').lower()
-        user_agent = values.get('http.user_agent', '').lower()
+        user_agent = values.get('http_user_agent', '').lower()
         
         print("\n--- 流量类型判断详情 ---")
         print(f"协议栈: {protocols}")
