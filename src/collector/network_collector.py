@@ -45,7 +45,7 @@ class NetworkCollector:
                 '-T', 'fields',  # 字段格式输出
                 '-e', 'frame.len',  # 数据包长度
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
-                '-2'  # 使用Wireshark 2.x 版本的解析引擎
+                '-Y', 'tls.handshake.extensions_server_name'  # 只处理包含SNI的数据包
             ]
             tshark_process = subprocess.Popen(
                 tshark_cmd,
