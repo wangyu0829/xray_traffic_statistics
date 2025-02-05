@@ -33,31 +33,40 @@ class NetworkCollector:
             # 启动tcpdump进程
             retry_count = 3
             retry_delay = 2
+            tcpdump_process = None
             
             for attempt in range(retry_count):
                 try:
-                    print("正在启动tcpdump进程...")
+                    print(f"正在启动tcpdump进程，第{attempt + 1}次尝试...")
                     tcpdump_process = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        bufsize=1024*1024,  # 设置较大的缓冲区
+                        bufsize=1024*1024*4,  # 增加缓冲区大小到4MB
                         start_new_session=True  # 在新会话中启动进程
                     )
                     print("tcpdump进程已启动，等待数据输出...")
                     # 检查tcpdump是否正常启动
-                    time.sleep(1)
+                    time.sleep(2)  # 增加等待时间
                     if tcpdump_process.poll() is not None:
                         print(f"tcpdump进程意外退出，退出码: {tcpdump_process.poll()}")
                         stderr = tcpdump_process.stderr.read().decode()
                         if stderr:
                             print(f"tcpdump错误信息: {stderr}")
                         if attempt < retry_count - 1:
+                            print(f"等待{retry_delay}秒后进行下一次尝试...")
+                            time.sleep(retry_delay)
                             continue
                     break
                 except subprocess.TimeoutExpired:
                     if attempt < retry_count - 1:
                         print(f"启动tcpdump进程超时，{retry_delay}秒后重试...")
+                        if tcpdump_process:
+                            try:
+                                tcpdump_process.terminate()
+                                tcpdump_process.wait(timeout=3)
+                            except:
+                                pass
                         time.sleep(retry_delay)
                         continue
                     print("启动tcpdump进程多次尝试均超时")
@@ -67,9 +76,19 @@ class NetworkCollector:
                         print("错误：需要sudo权限运行tcpdump")
                     else:
                         print(f"启动tcpdump进程失败: {str(e)}")
+                    if tcpdump_process:
+                        try:
+                            tcpdump_process.terminate()
+                            tcpdump_process.wait(timeout=3)
+                        except:
+                            pass
                     return self._traffic_data
             else:
                 print("无法启动tcpdump进程，已达到最大重试次数")
+                return self._traffic_data
+
+            if not tcpdump_process or tcpdump_process.poll() is not None:
+                print("tcpdump进程未能成功启动")
                 return self._traffic_data
 
             # 准备tshark进程
@@ -97,14 +116,20 @@ class NetworkCollector:
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
-            tshark_process = subprocess.Popen(
-                tshark_cmd,
-                stdin=tcpdump_process.stdout,  # 直接连接到tcpdump的输出
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=1024*1024  # 设置较大的缓冲区
-            )
-            print("tshark进程已准备就绪")
+            try:
+                tshark_process = subprocess.Popen(
+                    tshark_cmd,
+                    stdin=tcpdump_process.stdout,  # 直接连接到tcpdump的输出
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=1024*1024*8  # 增加缓冲区大小到8MB
+                )
+                print("tshark进程已准备就绪")
+            except Exception as e:
+                print(f"启动tshark进程失败: {str(e)}")
+                tcpdump_process.terminate()
+                tcpdump_process.wait(timeout=3)
+                return self._traffic_data
             
             # 关闭父进程中的tcpdump stdout副本
             tcpdump_process.stdout.close()
@@ -140,16 +165,36 @@ class NetworkCollector:
 
             # 停止tcpdump进程
             print("捕获时间结束，正在终止进程...")
-            tcpdump_process.terminate()
-            tcpdump_process.wait(timeout=5)
+            try:
+                tcpdump_process.terminate()
+                tcpdump_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print("警告：tcpdump进程未能在超时时间内终止")
+                try:
+                    tcpdump_process.kill()
+                    tcpdump_process.wait(timeout=2)
+                except:
+                    print("错误：无法强制终止tcpdump进程")
 
             # 等待tshark处理完所有数据
-            tshark_stdout, tshark_stderr = tshark_process.communicate()
-            if tshark_stderr:
-                print(f"tshark错误输出: {tshark_stderr.decode()}")
+            try:
+                tshark_stdout, tshark_stderr = tshark_process.communicate(timeout=10)
+                if tshark_stderr:
+                    print(f"tshark错误输出: {tshark_stderr.decode()}")
+            except subprocess.TimeoutExpired:
+                print("警告：tshark进程未能在超时时间内完成数据处理")
+                tshark_process.kill()
+                try:
+                    tshark_stdout, _ = tshark_process.communicate(timeout=2)
+                except:
+                    print("错误：无法获取tshark进程的输出数据")
+                    return self._traffic_data
 
             # 处理tshark输出
-            self._process_tshark_output(tshark_stdout)
+            if tshark_stdout:
+                self._process_tshark_output(tshark_stdout)
+            else:
+                print("警告：未收到tshark的输出数据")
 
         except subprocess.CalledProcessError as e:
             print(f"执行命令失败: {str(e)}")
