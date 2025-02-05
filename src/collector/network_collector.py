@@ -13,14 +13,7 @@ class NetworkCollector:
         self._traffic_data: Dict[str, List[TrafficRecord]] = {}
 
     def start_capture(self, duration: int = 60) -> Dict[str, List[TrafficRecord]]:
-        """开始捕获网络流量
-
-        Args:
-            duration: 捕获持续时间（秒）
-
-        Returns:
-            Dict[str, List[TrafficRecord]]: 按域名分组的流量记录
-        """
+        print(f"开始在接口 {self.interface} 上捕获端口 {self.port} 的流量数据...")
         try:
             # 使用tcpdump捕获指定接口和端口的流量
             cmd = [
@@ -34,6 +27,7 @@ class NetworkCollector:
                 '-s', '0',  # 捕获完整数据包
                 '-w', '-'   # 输出到标准输出
             ]
+            print(f"执行命令: {' '.join(cmd)}")
 
             # 启动tcpdump进程
             process = subprocess.Popen(
@@ -41,30 +35,31 @@ class NetworkCollector:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
+            print("tcpdump进程已启动")
 
             # 等待指定时间
             try:
+                print(f"等待 {duration} 秒...")
                 process.wait(timeout=duration)
             except subprocess.TimeoutExpired:
+                print("捕获时间结束，正在终止tcpdump进程...")
                 process.terminate()
 
             # 解析捕获的数据
+            print("开始解析捕获的数据...")
             self._parse_capture_data(process.stdout)
 
         except subprocess.CalledProcessError as e:
             print(f"执行tcpdump命令失败: {str(e)}")
+            stderr_output = e.stderr.decode() if e.stderr else "无错误输出"
+            print(f"错误输出: {stderr_output}")
         except Exception as e:
             print(f"捕获网络流量时发生错误: {str(e)}")
 
         return self._traffic_data
 
     def _parse_capture_data(self, capture_data):
-        """解析捕获的网络数据
-
-        Args:
-            capture_data: tcpdump捕获的原始数据
-        """
-        # 使用tshark解析tcpdump输出的数据
+        print("使用tshark解析tcpdump输出数据...")
         cmd = [
             'tshark',
             '-r', '-',  # 从标准输入读取
@@ -72,6 +67,7 @@ class NetworkCollector:
             '-e', 'frame.len',  # 数据包长度
             '-e', 'tls.handshake.extensions_server_name'  # SNI字段（域名）
         ]
+        print(f"执行命令: {' '.join(cmd)}")
 
         try:
             process = subprocess.Popen(
@@ -80,8 +76,10 @@ class NetworkCollector:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
+            print("tshark进程已启动")
 
             # 处理tshark输出
+            record_count = 0
             for line in process.stdout:
                 fields = line.decode().strip().split('\t')
                 if len(fields) == 2:
@@ -96,9 +94,17 @@ class NetworkCollector:
                         if domain not in self._traffic_data:
                             self._traffic_data[domain] = []
                         self._traffic_data[domain].append(record)
+                        record_count += 1
+
+            print(f"解析完成，共处理 {record_count} 条记录")
+            if record_count == 0:
+                stderr_output = process.stderr.read().decode()
+                print(f"tshark错误输出: {stderr_output}")
 
         except subprocess.CalledProcessError as e:
             print(f"解析捕获数据失败: {str(e)}")
+            stderr_output = e.stderr.decode() if e.stderr else "无错误输出"
+            print(f"错误输出: {stderr_output}")
         except Exception as e:
             print(f"处理捕获数据时发生错误: {str(e)}")
 
