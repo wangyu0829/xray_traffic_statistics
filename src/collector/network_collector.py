@@ -31,19 +31,35 @@ class NetworkCollector:
             print(f"执行命令: {' '.join(cmd)}")
 
             # 启动tcpdump进程
-            try:
-                tcpdump_process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    bufsize=1024*1024  # 设置较大的缓冲区
-                )
-                print("tcpdump进程已启动")
-            except subprocess.TimeoutExpired:
-                print("启动tcpdump进程超时")
-                return self._traffic_data
-            except Exception as e:
-                print(f"启动tcpdump进程失败: {str(e)}")
+            retry_count = 3
+            retry_delay = 2
+            
+            for attempt in range(retry_count):
+                try:
+                    tcpdump_process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        bufsize=1024*1024,  # 设置较大的缓冲区
+                        start_new_session=True  # 在新会话中启动进程
+                    )
+                    print("tcpdump进程已启动")
+                    break
+                except subprocess.TimeoutExpired:
+                    if attempt < retry_count - 1:
+                        print(f"启动tcpdump进程超时，{retry_delay}秒后重试...")
+                        time.sleep(retry_delay)
+                        continue
+                    print("启动tcpdump进程多次尝试均超时")
+                    return self._traffic_data
+                except Exception as e:
+                    if "Operation not permitted" in str(e):
+                        print("错误：需要sudo权限运行tcpdump")
+                    else:
+                        print(f"启动tcpdump进程失败: {str(e)}")
+                    return self._traffic_data
+            else:
+                print("无法启动tcpdump进程，已达到最大重试次数")
                 return self._traffic_data
 
             # 准备tshark进程
