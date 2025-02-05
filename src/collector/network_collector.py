@@ -242,15 +242,17 @@ class NetworkCollector:
                     if not fields[0].strip():
                         print("警告: 数据包长度为空，跳过此记录")
                         continue
+
+                    # 安全地获取字段值，避免索引越界
                     packet_len = fields[0]
                     ip_dst = fields[1]
                     ip_src = fields[2]
-                    tcp_dstport = fields[3]
-                    tcp_srcport = fields[4]
-                    udp_dstport = fields[5]
-                    udp_srcport = fields[6]
-                    sni = fields[7]
-                    http_host = fields[8]
+                    tcp_dstport = fields[3] if len(fields) > 3 else ""
+                    tcp_srcport = fields[4] if len(fields) > 4 else ""
+                    udp_dstport = fields[5] if len(fields) > 5 else ""
+                    udp_srcport = fields[6] if len(fields) > 6 else ""
+                    sni = fields[7] if len(fields) > 7 else ""
+                    http_host = fields[8] if len(fields) > 8 else ""
                     
                     # 尝试从多个字段中获取域名信息
                     domain = None
@@ -262,11 +264,17 @@ class NetworkCollector:
                     
                     # 如果没有域名信息，使用IP地址
                     if not domain:
-                        port = tcp_dstport or tcp_srcport or udp_dstport or udp_srcport
-                        if port == str(self.port):
-                            domain = ip_dst
+                        # 检查端口是否匹配
+                        is_target_port = (
+                            tcp_dstport == str(self.port) or
+                            tcp_srcport == str(self.port) or
+                            udp_dstport == str(self.port) or
+                            udp_srcport == str(self.port)
+                        )
+                        if is_target_port:
+                            domain = ip_dst if tcp_dstport == str(self.port) or udp_dstport == str(self.port) else ip_src
                         else:
-                            domain = ip_src
+                            domain = ip_dst  # 默认使用目标IP
                     
                     if domain and packet_len.isdigit():  # 确保域名和数据包长度有效
                         bytes_len = int(packet_len)
