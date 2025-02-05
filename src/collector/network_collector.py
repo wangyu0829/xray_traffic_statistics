@@ -36,6 +36,7 @@ class NetworkCollector:
             
             for attempt in range(retry_count):
                 try:
+                    print("正在启动tcpdump进程...")
                     tcpdump_process = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
@@ -43,7 +44,16 @@ class NetworkCollector:
                         bufsize=1024*1024,  # 设置较大的缓冲区
                         start_new_session=True  # 在新会话中启动进程
                     )
-                    print("tcpdump进程已启动")
+                    print("tcpdump进程已启动，等待数据输出...")
+                    # 检查tcpdump是否正常启动
+                    time.sleep(1)
+                    if tcpdump_process.poll() is not None:
+                        print(f"tcpdump进程意外退出，退出码: {tcpdump_process.poll()}")
+                        stderr = tcpdump_process.stderr.read().decode()
+                        if stderr:
+                            print(f"tcpdump错误信息: {stderr}")
+                        if attempt < retry_count - 1:
+                            continue
                     break
                 except subprocess.TimeoutExpired:
                     if attempt < retry_count - 1:
@@ -82,8 +92,10 @@ class NetworkCollector:
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
                 '-Q',  # 安静模式
-                '-o', 'tcp.desegment_tcp_streams:TRUE'  # 启用TCP流重组
+                '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
+                '-V'  # 显示数据包详细信息
             ]
+            print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
             tshark_process = subprocess.Popen(
                 tshark_cmd,
@@ -103,12 +115,26 @@ class NetworkCollector:
                 elapsed = int(time.time() - start_time)
                 remaining = duration - elapsed
                 print(f"\r正在捕获数据: {elapsed}秒/{duration}秒 [{elapsed*'#'}{remaining*'.'}]", end='', flush=True)
-                time.sleep(1)
-
-                # 检查进程状态
-                if tcpdump_process.poll() is not None or tshark_process.poll() is not None:
-                    print("\n进程意外终止")
+                
+                # 检查tcpdump进程状态
+                tcpdump_poll = tcpdump_process.poll()
+                if tcpdump_poll is not None:
+                    print(f"\ntcpdump进程已终止，退出码: {tcpdump_poll}")
+                    tcpdump_stderr = tcpdump_process.stderr.read().decode()
+                    if tcpdump_stderr:
+                        print(f"tcpdump错误输出: {tcpdump_stderr}")
                     break
+                
+                # 检查tshark进程状态
+                tshark_poll = tshark_process.poll()
+                if tshark_poll is not None:
+                    print(f"\ntshark进程已终止，退出码: {tshark_poll}")
+                    tshark_stderr = tshark_process.stderr.read().decode()
+                    if tshark_stderr:
+                        print(f"tshark错误输出: {tshark_stderr}")
+                    break
+                
+                time.sleep(1)
 
             print("\n")
 
@@ -126,11 +152,13 @@ class NetworkCollector:
             self._process_tshark_output(tshark_stdout)
 
         except subprocess.CalledProcessError as e:
-            print(f"执行tcpdump命令失败: {str(e)}")
+            print(f"执行命令失败: {str(e)}")
             stderr_output = e.stderr.decode() if e.stderr else "无错误输出"
             print(f"错误输出: {stderr_output}")
         except Exception as e:
             print(f"捕获网络流量时发生错误: {str(e)}")
+            import traceback
+            print(f"错误堆栈: {traceback.format_exc()}")
 
         return self._traffic_data
 
@@ -138,8 +166,12 @@ class NetworkCollector:
         print("处理tshark输出数据...")
         record_count = 0
         try:
+            print(f"接收到的原始数据大小: {len(stdout_data)} 字节")
             for line in stdout_data.splitlines():
-                fields = line.decode().strip().split('\t')
+                decoded_line = line.decode()
+                print(f"处理数据行: {decoded_line}")
+                fields = decoded_line.strip().split('\t')
+                print(f"解析字段数量: {len(fields)}")
                 if len(fields) >= 11:  # 确保有足够的字段
                     packet_len = fields[0]
                     ip_dst = fields[1]
