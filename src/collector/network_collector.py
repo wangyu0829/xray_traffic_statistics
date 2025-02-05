@@ -225,6 +225,13 @@ class NetworkCollector:
                 print(f"处理数据行: {decoded_line}")
                 fields = decoded_line.strip().split('\t')
                 print(f"解析字段数量: {len(fields)}")
+                
+                # 打印每个字段的值，方便调试
+                field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
+                              'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'http_uri',
+                              'dns_qry', 'dns_resp', 'http_full_uri']
+                for i, (name, value) in enumerate(zip(field_names, fields)):
+                    print(f"字段 {name}: {value}")
                 if len(fields) >= 13:  # 调整为包含所有新增字段
                     packet_len = fields[0]
                     ip_dst = fields[1]
