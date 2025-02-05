@@ -172,38 +172,26 @@ class NetworkCollector:
                 print(f"处理数据行: {decoded_line}")
                 fields = decoded_line.strip().split('\t')
                 print(f"解析字段数量: {len(fields)}")
-                if len(fields) >= 11:  # 确保有足够的字段
+                if len(fields) >= 5:  # 调整为5个字段
                     packet_len = fields[0]
                     ip_dst = fields[1]
                     ip_src = fields[2]
-                    tcp_dstport = fields[3]
-                    tcp_srcport = fields[4]
-                    udp_dstport = fields[5]
-                    udp_srcport = fields[6]
-                    sni = fields[7]
-                    http_host = fields[8]
-                    http_uri = fields[9]
-                    ftp_cmd = fields[10]
+                    port = fields[3]
+                    domain = fields[4] if len(fields) > 4 else None
                     
-                    # 尝试从不同协议中获取域名信息
-                    domain = None
-                    if sni:  # HTTPS流量
-                        domain = sni
-                    elif http_host:  # HTTP流量
-                        domain = http_host
-                    elif ftp_cmd:  # FTP流量
-                        domain = ip_dst  # FTP使用IP地址作为标识
-                    elif tcp_dstport == str(self.port) or udp_dstport == str(self.port):
-                        domain = ip_dst  # 目标端口匹配时使用目标IP
-                    elif tcp_srcport == str(self.port) or udp_srcport == str(self.port):
-                        domain = ip_src  # 源端口匹配时使用源IP
+                    # 如果没有域名信息，使用IP地址
+                    if not domain:
+                        if port == str(self.port):
+                            domain = ip_dst
+                        else:
+                            domain = ip_src
                     
                     if domain and packet_len.isdigit():  # 确保域名和数据包长度有效
                         bytes_len = int(packet_len)
                         record = TrafficRecord(
                             domain=domain,
-                            bytes_sent=bytes_len if tcp_srcport == str(self.port) or udp_srcport == str(self.port) else 0,
-                            bytes_received=bytes_len if tcp_dstport == str(self.port) or udp_dstport == str(self.port) else 0,
+                            bytes_sent=bytes_len if port != str(self.port) else 0,
+                            bytes_received=bytes_len if port == str(self.port) else 0,
                             timestamp=datetime.now()
                         )
                         if domain not in self._traffic_data:
