@@ -61,17 +61,48 @@ class NetworkCollector:
             import time
             
             def pipe_data():
+                buffer_size = 1024 * 1024  # 1MB缓冲区
                 try:
                     while True:
-                        data = tcpdump_process.stdout.read1(1024*1024)
-                        if not data:
-                            break
-                        tshark_process.stdin.write(data)
-                        tshark_process.stdin.flush()
+                        # 使用select来监控管道状态
+                        import select
+                        readable, _, _ = select.select([tcpdump_process.stdout], [], [], 1.0)
+                        
+                        if not readable:
+                            continue
+                            
+                        try:
+                            data = tcpdump_process.stdout.read1(buffer_size)
+                            if not data:
+                                break
+                                
+                            # 分块写入数据，避免管道阻塞
+                            total_written = 0
+                            while total_written < len(data):
+                                try:
+                                    written = tshark_process.stdin.write(data[total_written:])
+                                    if written is None:
+                                        break
+                                    total_written += written
+                                    tshark_process.stdin.flush()
+                                except IOError as e:
+                                    if e.errno == 32:  # Broken pipe
+                                        print("tshark进程已关闭管道连接")
+                                        return
+                                    raise
+                        except IOError as e:
+                            if e.errno == 32:  # Broken pipe
+                                print("tcpdump进程已关闭管道连接")
+                                break
+                            raise
                 except Exception as e:
                     print(f"数据传输过程中发生错误: {str(e)}")
                 finally:
-                    tshark_process.stdin.close()
+                    try:
+                        tshark_process.stdin.flush()
+                        tshark_process.stdin.close()
+                    except:
+                        pass  # 忽略关闭时的错误
 
             pipe_thread = Thread(target=pipe_data)
             pipe_thread.start()
