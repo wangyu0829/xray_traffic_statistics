@@ -110,19 +110,32 @@ class NetworkCollector:
                 '-e', 'quic.tag.sni',  # QUIC SNI
                 '-e', 'http2.headers.authority',  # HTTP2主机名
                 '-e', 'http2.stream.header.value',  # HTTP2头部值
+                '-e', 'http.request.uri',  # HTTP请求URI
+                '-e', 'http.content.type',  # HTTP内容类型
+                '-e', 'http2.headers.content-type',  # HTTP2内容类型
+                '-e', 'media.type',  # 媒体类型
+                '-e', 'rtp.p_type',  # RTP负载类型
+                '-e', 'rtsp.request.uri',  # RTSP请求URI
+                '-e', 'websocket.payload_length',  # WebSocket负载
+                '-e', 'mqtt.topic',  # MQTT主题
+                '-e', 'amqp.method.arguments.queue',  # AMQP队列
+                '-e', 'redis.command',  # Redis命令
                 '-E', 'separator=\t',  # 设置字段分隔符
                 '-E', 'header=n',  # 不显示字段头
                 '-E', 'quote=n',  # 禁用字段引号
                 '-E', 'occurrence=f',  # 只显示第一个匹配项
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
-                '-Y', f'ip && (tcp.port=={self.port} || udp.port=={self.port} || quic)',  # 过滤条件
+                '-Y', f'ip && (tcp.port=={self.port} || udp.port=={self.port} || quic || rtp || rtsp || mqtt || amqp || redis || websocket)',  # 过滤条件
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
                 '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
                 '-o', 'http2.reassemble_stream:TRUE',  # 启用HTTP2流重组
                 '-o', 'quic.max_stream_data:4294967295',  # 增加QUIC流数据限制
-                '-o', 'quic.desegment_streaming_data:TRUE'  # 启用QUIC流数据重组
+                '-o', 'quic.desegment_streaming_data:TRUE',  # 启用QUIC流数据重组
+                '-o', 'websocket.reassemble_fragments:TRUE',  # 启用WebSocket分片重组
+                '-o', 'rtsp.desegment_headers:TRUE',  # 启用RTSP头部重组
+                '-o', 'rtp.heuristic_rtp:TRUE'  # 启用RTP启发式检测
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
@@ -226,77 +239,35 @@ class NetworkCollector:
             print(f"总行数: {len(lines)}")
             
             for line_num, line in enumerate(lines, 1):
-                print(f"\n处理第 {line_num} 行数据:")
                 try:
                     decoded_line = line.decode()
-                    print(f"解码后的数据行: {decoded_line}")
                     fields = decoded_line.strip().split('\t')
-                    print(f"解析出字段数量: {len(fields)}")
                     
                     # 打印每个字段的值，方便调试
                     field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
                                 'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'dns_name',
-                                'quic_sni', 'http2_authority', 'http2_header']
-                    print("字段详细信息:")
+                                'quic_sni', 'http2_authority', 'http2_header', 'http_uri',
+                                'http_content_type', 'http2_content_type', 'media_type',
+                                'rtp_type', 'rtsp_uri', 'ws_length', 'mqtt_topic',
+                                'amqp_queue', 'redis_cmd']
+                    
+                    # 安全地获取字段值
+                    values = {}
                     for i, name in enumerate(field_names):
-                        value = fields[i] if i < len(fields) else "<未提供>"
-                        print(f"  {name:15} = {value}")
+                        values[name] = fields[i].strip() if i < len(fields) and fields[i].strip() else ""
                     
-                    # 修改字段数量检查逻辑，只要求基本字段存在
-                    if len(fields) < 3:  # 只需要包长度和IP地址信息
-                        print(f"警告: 基本字段数量不足 (至少需要3个，实际{len(fields)}个)")
-                        continue
-                        
-                    if not fields[0].strip():
-                        print("警告: 数据包长度为空，跳过此记录")
-                        continue
-
-                    # 安全地获取字段值，避免索引越界
-                    packet_len = fields[0]
-                    ip_dst = fields[1]
-                    ip_src = fields[2]
-                    tcp_dstport = fields[3] if len(fields) > 3 else ""
-                    tcp_srcport = fields[4] if len(fields) > 4 else ""
-                    udp_dstport = fields[5] if len(fields) > 5 else ""
-                    udp_srcport = fields[6] if len(fields) > 6 else ""
-                    sni = fields[7] if len(fields) > 7 else ""
-                    http_host = fields[8] if len(fields) > 8 else ""
-                    dns_name = fields[9] if len(fields) > 9 else ""
-                    quic_sni = fields[10] if len(fields) > 10 else ""
-                    http2_authority = fields[11] if len(fields) > 11 else ""
-                    http2_header = fields[12] if len(fields) > 12 else ""
+                    # 确定流量类型
+                    traffic_type = self._determine_traffic_type(values)
                     
-                    # 尝试从多个字段中获取域名信息
-                    domain = None
-                    # 按优先级尝试不同的域名来源
-                    for domain_source in [sni, quic_sni, http2_authority, http_host, dns_name]:
-                        if domain_source and domain_source.strip():
-                            domain = domain_source.strip()
-                            break
+                    # 获取域名
+                    domain = self._get_domain(values)
                     
-                    # 如果没有域名信息，使用IP地址
-                    if not domain:
-                        # 检查端口是否匹配
-                        is_target_port = (
-                            tcp_dstport == str(self.port) or
-                            tcp_srcport == str(self.port) or
-                            udp_dstport == str(self.port) or
-                            udp_srcport == str(self.port)
-                        )
-                        if is_target_port:
-                            domain = ip_dst if tcp_dstport == str(self.port) or udp_dstport == str(self.port) else ip_src
-                        else:
-                            domain = ip_dst  # 默认使用目标IP
-                    
-                    if domain and packet_len.isdigit():  # 确保域名和数据包长度有效
-                        bytes_len = int(packet_len)
-                        # 判断数据包方向
-                        is_incoming = False
-                        if tcp_dstport == str(self.port) or udp_dstport == str(self.port):
-                            is_incoming = True
+                    if domain and values['packet_len'].isdigit():
+                        bytes_len = int(values['packet_len'])
+                        is_incoming = self._is_incoming_traffic(values)
                         
                         record = TrafficRecord(
-                            domain=domain,
+                            domain=f"{domain} [{traffic_type}]",  # 在域名后添加流量类型标记
                             bytes_sent=0 if is_incoming else bytes_len,
                             bytes_received=bytes_len if is_incoming else 0,
                             timestamp=datetime.now()
@@ -310,12 +281,84 @@ class NetworkCollector:
                     print(f"处理第 {line_num} 行数据时发生错误: {str(e)}")
                     import traceback
                     print(f"错误堆栈: {traceback.format_exc()}")
+
             print(f"解析完成，共处理 {record_count} 条记录")
-            if record_count == 0:
-                print("警告：未发现任何有效的流量记录")
 
         except Exception as e:
             print(f"处理tshark输出数据时发生错误: {str(e)}")
+
+    def _determine_traffic_type(self, values):
+        """确定流量类型"""
+        # 视频流量
+        if any([
+            'video' in (values.get('http_content_type', '') + values.get('http2_content_type', '')).lower(),
+            'video' in (values.get('media_type', '')).lower(),
+            values.get('rtsp_uri', ''),
+            values.get('rtp_type', '') in ['96', '97', '98']  # 常见视频RTP负载类型
+        ]):
+            return 'VIDEO'
+            
+        # 音频流量
+        elif any([
+            'audio' in (values.get('http_content_type', '') + values.get('http2_content_type', '')).lower(),
+            'audio' in (values.get('media_type', '')).lower(),
+            values.get('rtp_type', '') in ['0', '3', '8', '10', '11']  # 常见音频RTP负载类型
+        ]):
+            return 'AUDIO'
+            
+        # 消息队列流量
+        elif any([
+            values.get('mqtt_topic', ''),
+            values.get('amqp_queue', '')
+        ]):
+            return 'MESSAGE_QUEUE'
+            
+        # 数据库流量
+        elif values.get('redis_cmd', ''):
+            return 'DATABASE'
+            
+        # WebSocket流量
+        elif values.get('ws_length', ''):
+            return 'WEBSOCKET'
+            
+        # Web流量
+        elif any([
+            values.get('http_uri', ''),
+            values.get('http_content_type', ''),
+            values.get('http2_content_type', '')
+        ]):
+            return 'WEB'
+            
+        # DNS流量
+        elif values.get('dns_name', ''):
+            return 'DNS'
+            
+        return 'OTHER'
+
+    def _get_domain(self, values):
+        """从各个字段中提取域名"""
+        # 按优先级尝试不同的域名来源
+        domain_sources = [
+            values.get('sni', ''),
+            values.get('quic_sni', ''),
+            values.get('http2_authority', ''),
+            values.get('http_host', ''),
+            values.get('dns_name', ''),
+            values.get('mqtt_topic', '').split('/')[0] if values.get('mqtt_topic', '') else '',
+            values.get('ip_dst', '')
+        ]
+        
+        for domain in domain_sources:
+            if domain and domain.strip():
+                return domain.strip()
+        return None
+
+    def _is_incoming_traffic(self, values):
+        """判断是否为入站流量"""
+        return any([
+            values.get('tcp_dstport', '') == str(self.port),
+            values.get('udp_dstport', '') == str(self.port)
+        ])
 
     def get_domain_total_traffic(self) -> Dict[str, int]:
         """获取每个域名的总流量
