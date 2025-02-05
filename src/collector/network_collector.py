@@ -92,6 +92,7 @@ class NetworkCollector:
                 return self._traffic_data
 
             # 准备tshark进程
+            # 优化tshark命令参数
             tshark_cmd = [
                 'tshark',
                 '-r', '-',  # 从标准输入读取
@@ -106,15 +107,17 @@ class NetworkCollector:
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
                 '-e', 'http.host',  # HTTP主机名
                 '-E', 'separator=\t',  # 设置字段分隔符
+                '-E', 'header=n',  # 不显示字段头
                 '-E', 'quote=n',  # 禁用字段引号
                 '-E', 'occurrence=f',  # 只显示第一个匹配项
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
                 '-Q',  # 安静模式
+                '-2',  # 启用第二层报文解析
+                '-R', f'tcp.port=={self.port} || udp.port=={self.port}',  # 添加端口过滤条件
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
-                '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
-                '-o', 'tcp.no_subdissector_on_error:TRUE'  # 错误时不使用子解析器
+                '-o', 'tls.desegment_ssl_application_data:TRUE'  # 启用TLS应用数据重组
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
@@ -233,8 +236,9 @@ class NetworkCollector:
                         value = fields[i] if i < len(fields) else "<未提供>"
                         print(f"  {name:15} = {value}")
                         
-                    if len(fields) < 9:
-                        print(f"警告: 字段数量不足 (期望9个，实际{len(fields)}个)")
+                    # 修改字段数量检查逻辑，只要求基本字段存在
+                    if len(fields) < 3:  # 只需要包长度和IP地址信息
+                        print(f"警告: 基本字段数量不足 (至少需要3个，实际{len(fields)}个)")
                         continue
                         
                     if not fields[0].strip():
