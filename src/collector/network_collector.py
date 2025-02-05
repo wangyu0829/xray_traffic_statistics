@@ -44,8 +44,15 @@ class NetworkCollector:
                 '-r', '-',  # 从标准输入读取
                 '-T', 'fields',  # 字段格式输出
                 '-e', 'frame.len',  # 数据包长度
+                '-e', 'ip.dst',  # 目标IP
+                '-e', 'tcp.dstport',  # 目标端口
+                '-e', 'udp.dstport',  # UDP目标端口
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
-                '-Y', 'tls.handshake.extensions_server_name'  # 只处理包含SNI的数据包
+                '-e', 'http.host',  # HTTP主机名
+                '-e', 'http.request.uri',  # HTTP请求URI
+                '-e', 'ftp.request.command',  # FTP命令
+                '-E', 'separator=\t',  # 设置字段分隔符
+                '-Y', 'ip'  # 捕获所有IP数据包
             ]
             tshark_process = subprocess.Popen(
                 tshark_cmd,
@@ -141,12 +148,25 @@ class NetworkCollector:
     def _process_tshark_output(self, stdout_data):
         print("处理tshark输出数据...")
         record_count = 0
+        current_domain = None
         try:
             for line in stdout_data.splitlines():
                 fields = line.decode().strip().split('\t')
-                if len(fields) == 2:
-                    packet_len, domain = fields
-                    if domain:  # 只处理包含域名的记录
+                if len(fields) >= 8:  # 确保有足够的字段
+                    packet_len, ip_dst, tcp_port, udp_port, sni, http_host, http_uri, ftp_cmd = fields[:8]
+                    
+                    # 尝试从不同协议中获取域名信息
+                    domain = None
+                    if sni:  # HTTPS流量
+                        domain = sni
+                    elif http_host:  # HTTP流量
+                        domain = http_host
+                    elif ftp_cmd:  # FTP流量
+                        domain = ip_dst  # FTP使用IP地址作为标识
+                    elif tcp_port or udp_port:  # 其他TCP/UDP流量
+                        domain = ip_dst
+                    
+                    if domain:  # 如果成功识别域名
                         record = TrafficRecord(
                             domain=domain,
                             bytes_sent=int(packet_len),
