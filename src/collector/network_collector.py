@@ -300,6 +300,7 @@ class NetworkCollector:
                         record_count += 1
 
             print(f"解析完成，共处理 {record_count} 条记录")
+            print(f"解析完成，共处理 {record_count} 条记录")
             if record_count == 0:
                 print("警告：未发现任何有效的流量记录")
 
