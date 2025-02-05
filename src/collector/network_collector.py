@@ -117,10 +117,8 @@ class NetworkCollector:
                 '-n',  # 不解析主机名
                 '-Q',  # 安静模式
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
-                '-o', 'tls.keylog_file:',  # 禁用TLS密钥日志
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
-                '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
-                '-V'  # 显示数据包详细信息
+                '-o', 'tls.desegment_ssl_application_data:TRUE'  # 启用TLS应用数据重组
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
