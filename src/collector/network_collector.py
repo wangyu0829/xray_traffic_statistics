@@ -112,9 +112,7 @@ class NetworkCollector:
                 '-E', 'occurrence=f',  # 只显示第一个匹配项
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
-                '-Q',  # 安静模式
-                '-2',  # 启用第二层报文解析
-                '-R', f'tcp.port=={self.port} || udp.port=={self.port}',  # 添加端口过滤条件
+                '-Y', f'tcp.port=={self.port} || udp.port=={self.port}',  # 使用-Y替代-R进行过滤
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
                 '-o', 'tls.desegment_ssl_application_data:TRUE'  # 启用TLS应用数据重组
