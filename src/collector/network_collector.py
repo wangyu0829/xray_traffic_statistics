@@ -107,18 +107,9 @@ class NetworkCollector:
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
                 '-e', 'http.host',  # HTTP主机名
                 '-e', 'dns.qry.name',  # DNS查询名称
-                '-e', 'quic.tag.sni',  # QUIC SNI
-                '-e', 'http2.authority',  # HTTP2主机名
                 '-e', 'http.request.uri',  # HTTP请求URI
                 '-e', 'http.content_type',  # HTTP内容类型
-                '-e', 'http2.header.content-type',  # HTTP2内容类型
                 '-e', 'media.type',  # 媒体类型
-                '-e', 'rtp.p_type',  # RTP负载类型
-                '-e', 'rtsp.request.uri',  # RTSP请求URI
-                '-e', 'websocket.payload_length',  # WebSocket负载
-                '-e', 'mqtt.topic',  # MQTT主题
-                '-e', 'amqp.method.queue',  # AMQP队列
-                '-e', 'redis.command',  # Redis命令
                 '-E', 'separator=\t',  # 设置字段分隔符
                 '-E', 'header=n',  # 不显示字段头
                 '-E', 'quote=n',  # 禁用字段引号
@@ -239,10 +230,7 @@ class NetworkCollector:
                     # 打印每个字段的值，方便调试
                     field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
                                 'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'dns_name',
-                                'quic_sni', 'http2_authority', 'http_uri',
-                                'http_content_type', 'http2_content_type', 'media_type',
-                                'rtp_type', 'rtsp_uri', 'ws_length', 'mqtt_topic',
-                                'amqp_queue', 'redis_cmd']
+                                'http_uri', 'http_content_type', 'media_type']
                     
                     # 安全地获取字段值
                     values = {}
@@ -272,8 +260,7 @@ class NetworkCollector:
 
                 except Exception as e:
                     print(f"处理第 {line_num} 行数据时发生错误: {str(e)}")
-                    import traceback
-                    print(f"错误堆栈: {traceback.format_exc()}")
+                    continue
 
             print(f"解析完成，共处理 {record_count} 条记录")
 
@@ -284,47 +271,32 @@ class NetworkCollector:
         """确定流量类型"""
         # 视频流量
         if any([
-            'video' in (values.get('http_content_type', '') + values.get('http2_content_type', '')).lower(),
-            'video' in (values.get('media_type', '')).lower(),
-            values.get('rtsp_uri', ''),
-            values.get('rtp_type', '') in ['96', '97', '98']  # 常见视频RTP负载类型
+            'video' in (values.get('http_content_type', '')).lower(),
+            'video' in (values.get('media_type', '')).lower()
         ]):
             return 'VIDEO'
             
         # 音频流量
         elif any([
-            'audio' in (values.get('http_content_type', '') + values.get('http2_content_type', '')).lower(),
-            'audio' in (values.get('media_type', '')).lower(),
-            values.get('rtp_type', '') in ['0', '3', '8', '10', '11']  # 常见音频RTP负载类型
+            'audio' in (values.get('http_content_type', '')).lower(),
+            'audio' in (values.get('media_type', '')).lower()
         ]):
             return 'AUDIO'
-            
-        # 消息队列流量
-        elif any([
-            values.get('mqtt_topic', ''),
-            values.get('amqp_queue', '')
-        ]):
-            return 'MESSAGE_QUEUE'
-            
-        # 数据库流量
-        elif values.get('redis_cmd', ''):
-            return 'DATABASE'
-            
-        # WebSocket流量
-        elif values.get('ws_length', ''):
-            return 'WEBSOCKET'
             
         # Web流量
         elif any([
             values.get('http_uri', ''),
-            values.get('http_content_type', ''),
-            values.get('http2_content_type', '')
+            values.get('http_content_type', '')
         ]):
             return 'WEB'
             
         # DNS流量
         elif values.get('dns_name', ''):
             return 'DNS'
+            
+        # TLS流量
+        elif values.get('sni', ''):
+            return 'TLS'
             
         return 'OTHER'
 
@@ -333,11 +305,8 @@ class NetworkCollector:
         # 按优先级尝试不同的域名来源
         domain_sources = [
             values.get('sni', ''),
-            values.get('quic_sni', ''),
-            values.get('http2_authority', ''),
             values.get('http_host', ''),
             values.get('dns_name', ''),
-            values.get('mqtt_topic', '').split('/')[0] if values.get('mqtt_topic', '') else '',
             values.get('ip_dst', '')
         ]
         
