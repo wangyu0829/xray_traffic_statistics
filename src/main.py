@@ -1,8 +1,8 @@
 import argparse
-from collector.log_parser import XrayLogParser
-from collector.network_collector import NetworkCollector
-from processor.traffic_analyzer import TrafficAnalyzer
-from display.result_formatter import ResultFormatter
+from src.collector.log_parser import XrayLogParser
+from src.collector.network_collector import NetworkCollector
+from src.processor.traffic_analyzer import TrafficAnalyzer
+from src.display.result_formatter import ResultFormatter
 
 def parse_args():
     """解析命令行参数"""
