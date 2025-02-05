@@ -55,7 +55,6 @@ class NetworkCollector:
                 '-e', 'http.request.uri',  # HTTP请求URI
                 '-e', 'ftp.request.command',  # FTP命令
                 '-E', 'separator=\t',  # 设置字段分隔符
-                '-Y', f'port {self.port}',  # 只捕获指定端口的数据包
                 '-l'  # 行缓冲模式
             ]
             tshark_process = subprocess.Popen(
