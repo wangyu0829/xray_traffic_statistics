@@ -100,22 +100,29 @@ class NetworkCollector:
                 '-e', 'frame.len',  # 数据包长度
                 '-e', 'ip.dst',  # 目标IP
                 '-e', 'ip.src',  # 源IP
-                '-e', 'tcp.dstport',  # 目标端口
-                '-e', 'tcp.srcport',  # 源端口
+                '-e', 'tcp.dstport',  # TCP目标端口
+                '-e', 'tcp.srcport',  # TCP源端口
                 '-e', 'udp.dstport',  # UDP目标端口
                 '-e', 'udp.srcport',  # UDP源端口
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
                 '-e', 'http.host',  # HTTP主机名
+                '-e', 'dns.qry.name',  # DNS查询名称
+                '-e', 'quic.tag.sni',  # QUIC SNI
+                '-e', 'http2.headers.authority',  # HTTP2主机名
+                '-e', 'http2.stream.header.value',  # HTTP2头部值
                 '-E', 'separator=\t',  # 设置字段分隔符
                 '-E', 'header=n',  # 不显示字段头
                 '-E', 'quote=n',  # 禁用字段引号
                 '-E', 'occurrence=f',  # 只显示第一个匹配项
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
-                '-Y', f'tcp.port=={self.port} || udp.port=={self.port}',  # 使用-Y替代-R进行过滤
+                '-Y', f'ip && (tcp.port=={self.port} || udp.port=={self.port} || quic)',  # 过滤条件
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
-                '-o', 'tls.desegment_ssl_application_data:TRUE'  # 启用TLS应用数据重组
+                '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
+                '-o', 'http2.reassemble_stream:TRUE',  # 启用HTTP2流重组
+                '-o', 'quic.max_stream_data:4294967295',  # 增加QUIC流数据限制
+                '-o', 'quic.desegment_streaming_data:TRUE'  # 启用QUIC流数据重组
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
@@ -228,12 +235,13 @@ class NetworkCollector:
                     
                     # 打印每个字段的值，方便调试
                     field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
-                                  'udp_dstport', 'udp_srcport', 'sni', 'http_host']
+                                'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'dns_name',
+                                'quic_sni', 'http2_authority', 'http2_header']
                     print("字段详细信息:")
                     for i, name in enumerate(field_names):
                         value = fields[i] if i < len(fields) else "<未提供>"
                         print(f"  {name:15} = {value}")
-                        
+                    
                     # 修改字段数量检查逻辑，只要求基本字段存在
                     if len(fields) < 3:  # 只需要包长度和IP地址信息
                         print(f"警告: 基本字段数量不足 (至少需要3个，实际{len(fields)}个)")
@@ -253,14 +261,18 @@ class NetworkCollector:
                     udp_srcport = fields[6] if len(fields) > 6 else ""
                     sni = fields[7] if len(fields) > 7 else ""
                     http_host = fields[8] if len(fields) > 8 else ""
+                    dns_name = fields[9] if len(fields) > 9 else ""
+                    quic_sni = fields[10] if len(fields) > 10 else ""
+                    http2_authority = fields[11] if len(fields) > 11 else ""
+                    http2_header = fields[12] if len(fields) > 12 else ""
                     
                     # 尝试从多个字段中获取域名信息
                     domain = None
-                    # 优先使用SNI和HTTP主机名
-                    if sni and sni.strip():
-                        domain = sni.strip()
-                    elif http_host and http_host.strip():
-                        domain = http_host.strip()
+                    # 按优先级尝试不同的域名来源
+                    for domain_source in [sni, quic_sni, http2_authority, http_host, dns_name]:
+                        if domain_source and domain_source.strip():
+                            domain = domain_source.strip()
+                            break
                     
                     # 如果没有域名信息，使用IP地址
                     if not domain:
