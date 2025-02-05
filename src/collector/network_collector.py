@@ -122,7 +122,6 @@ class NetworkCollector:
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
                 '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
                 '-o', 'tcp.no_subdissector_on_error:TRUE',  # 错误时不使用子解析器
-                '-o', 'http.ssl.port:443,8443',  # 指定SSL端口
                 '-o', 'ssl.keylog_file:',  # 禁用SSL密钥日志
                 '-o', 'tcp.check_checksum:FALSE'  # 禁用TCP校验和检查
             ]
