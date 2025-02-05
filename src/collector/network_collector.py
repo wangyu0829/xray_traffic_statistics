@@ -108,17 +108,16 @@ class NetworkCollector:
                 '-e', 'http.host',  # HTTP主机名
                 '-e', 'dns.qry.name',  # DNS查询名称
                 '-e', 'quic.tag.sni',  # QUIC SNI
-                '-e', 'http2.headers.authority',  # HTTP2主机名
-                '-e', 'http2.stream.header.value',  # HTTP2头部值
+                '-e', 'http2.authority',  # HTTP2主机名
                 '-e', 'http.request.uri',  # HTTP请求URI
-                '-e', 'http.content.type',  # HTTP内容类型
-                '-e', 'http2.headers.content-type',  # HTTP2内容类型
+                '-e', 'http.content_type',  # HTTP内容类型
+                '-e', 'http2.header.content-type',  # HTTP2内容类型
                 '-e', 'media.type',  # 媒体类型
                 '-e', 'rtp.p_type',  # RTP负载类型
                 '-e', 'rtsp.request.uri',  # RTSP请求URI
                 '-e', 'websocket.payload_length',  # WebSocket负载
                 '-e', 'mqtt.topic',  # MQTT主题
-                '-e', 'amqp.method.arguments.queue',  # AMQP队列
+                '-e', 'amqp.method.queue',  # AMQP队列
                 '-e', 'redis.command',  # Redis命令
                 '-E', 'separator=\t',  # 设置字段分隔符
                 '-E', 'header=n',  # 不显示字段头
@@ -126,16 +125,10 @@ class NetworkCollector:
                 '-E', 'occurrence=f',  # 只显示第一个匹配项
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
-                '-Y', f'ip && (tcp.port=={self.port} || udp.port=={self.port} || quic || rtp || rtsp || mqtt || amqp || redis || websocket)',  # 过滤条件
+                '-Y', f'ip && (tcp.port=={self.port} || udp.port=={self.port})',  # 过滤条件
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
-                '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
-                '-o', 'http2.reassemble_stream:TRUE',  # 启用HTTP2流重组
-                '-o', 'quic.max_stream_data:4294967295',  # 增加QUIC流数据限制
-                '-o', 'quic.desegment_streaming_data:TRUE',  # 启用QUIC流数据重组
-                '-o', 'websocket.reassemble_fragments:TRUE',  # 启用WebSocket分片重组
-                '-o', 'rtsp.desegment_headers:TRUE',  # 启用RTSP头部重组
-                '-o', 'rtp.heuristic_rtp:TRUE'  # 启用RTP启发式检测
+                '-o', 'tls.desegment_ssl_application_data:TRUE'  # 启用TLS应用数据重组
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
@@ -246,7 +239,7 @@ class NetworkCollector:
                     # 打印每个字段的值，方便调试
                     field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
                                 'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'dns_name',
-                                'quic_sni', 'http2_authority', 'http2_header', 'http_uri',
+                                'quic_sni', 'http2_authority', 'http_uri',
                                 'http_content_type', 'http2_content_type', 'media_type',
                                 'rtp_type', 'rtsp_uri', 'ws_length', 'mqtt_topic',
                                 'amqp_queue', 'redis_cmd']
