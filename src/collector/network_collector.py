@@ -299,7 +299,10 @@ class NetworkCollector:
                         self._traffic_data[domain].append(record)
                         record_count += 1
 
-            print(f"解析完成，共处理 {record_count} 条记录")
+                except Exception as e:
+                    print(f"处理第 {line_num} 行数据时发生错误: {str(e)}")
+                    import traceback
+                    print(f"错误堆栈: {traceback.format_exc()}")
             print(f"解析完成，共处理 {record_count} 条记录")
             if record_count == 0:
                 print("警告：未发现任何有效的流量记录")
