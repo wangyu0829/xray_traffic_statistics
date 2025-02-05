@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 import subprocess
+import time
 import re
 from .log_parser import TrafficRecord
 
@@ -55,95 +56,42 @@ class NetworkCollector:
                 '-e', 'http.request.uri',  # HTTP请求URI
                 '-e', 'ftp.request.command',  # FTP命令
                 '-E', 'separator=\t',  # 设置字段分隔符
-                '-l'  # 行缓冲模式
+                '-l',  # 行缓冲模式
+                '-n',  # 不解析主机名
+                '-Q',  # 安静模式
+                '-o', 'tcp.desegment_tcp_streams:TRUE'  # 启用TCP流重组
             ]
             tshark_process = subprocess.Popen(
                 tshark_cmd,
-                stdin=subprocess.PIPE,
+                stdin=tcpdump_process.stdout,  # 直接连接到tcpdump的输出
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=1024*1024  # 设置较大的缓冲区
             )
             print("tshark进程已准备就绪")
 
-            # 创建管道线程
-            from threading import Thread
-            import time
-            
-            def pipe_data():
-                buffer_size = 1024 * 1024  # 1MB缓冲区
-                try:
-                    import select
-                    import time
-                    while True:
-                        # 使用select来监控管道状态，增加超时处理
-                        readable, _, _ = select.select([tcpdump_process.stdout], [], [], 0.5)
-                        
-                        if not readable:
-                            # 检查进程状态
-                            if tcpdump_process.poll() is not None:
-                                print("tcpdump进程已结束")
-                                break
-                            continue
-                            
-                        try:
-                            data = tcpdump_process.stdout.read1(buffer_size)
-                            if not data:
-                                break
-                                
-                            # 分块写入数据，使用更小的块大小
-                            chunk_size = 32768  # 32KB
-                            total_written = 0
-                            while total_written < len(data):
-                                try:
-                                    chunk = data[total_written:total_written + chunk_size]
-                                    written = tshark_process.stdin.write(chunk)
-                                    if written is None:
-                                        time.sleep(0.01)  # 短暂暂停，避免CPU过载
-                                        continue
-                                    total_written += written
-                                    tshark_process.stdin.flush()
-                                except IOError as e:
-                                    if e.errno == 32:  # Broken pipe
-                                        print("tshark进程已关闭管道连接")
-                                        return
-                                    elif e.errno in (11, 35):  # Resource temporarily unavailable
-                                        time.sleep(0.01)
-                                        continue
-                                    raise
-                        except IOError as e:
-                            if e.errno == 32:  # Broken pipe
-                                print("tcpdump进程已关闭管道连接")
-                                break
-                            elif e.errno in (11, 35):  # Resource temporarily unavailable
-                                time.sleep(0.01)
-                                continue
-                            raise
-                except Exception as e:
-                    print(f"数据传输过程中发生错误: {str(e)}")
-                finally:
-                    try:
-                        tshark_process.stdin.flush()
-                        tshark_process.stdin.close()
-                    except:
-                        pass  # 忽略关闭时的错误
-
-            pipe_thread = Thread(target=pipe_data)
-            pipe_thread.start()
+            # 关闭tcpdump的stdout，避免文件描述符泄漏
+            tcpdump_process.stdout.close()
 
             # 显示进度
             start_time = time.time()
-            while pipe_thread.is_alive() and time.time() - start_time < duration:
+            while time.time() - start_time < duration:
                 elapsed = int(time.time() - start_time)
                 remaining = duration - elapsed
                 print(f"\r正在捕获数据: {elapsed}秒/{duration}秒 [{elapsed*'#'}{remaining*'.'}]", end='', flush=True)
                 time.sleep(1)
+
+                # 检查进程状态
+                if tcpdump_process.poll() is not None or tshark_process.poll() is not None:
+                    print("\n进程意外终止")
+                    break
+
             print("\n")
 
             # 停止tcpdump进程
             print("捕获时间结束，正在终止进程...")
             tcpdump_process.terminate()
-            pipe_thread.join(timeout=5)
+            tcpdump_process.wait(timeout=5)
 
             # 等待tshark处理完所有数据
             tshark_stdout, tshark_stderr = tshark_process.communicate()
@@ -165,12 +113,21 @@ class NetworkCollector:
     def _process_tshark_output(self, stdout_data):
         print("处理tshark输出数据...")
         record_count = 0
-        current_domain = None
         try:
             for line in stdout_data.splitlines():
                 fields = line.decode().strip().split('\t')
-                if len(fields) >= 8:  # 确保有足够的字段
-                    packet_len, ip_dst, tcp_port, udp_port, sni, http_host, http_uri, ftp_cmd = fields[:8]
+                if len(fields) >= 11:  # 确保有足够的字段
+                    packet_len = fields[0]
+                    ip_dst = fields[1]
+                    ip_src = fields[2]
+                    tcp_dstport = fields[3]
+                    tcp_srcport = fields[4]
+                    udp_dstport = fields[5]
+                    udp_srcport = fields[6]
+                    sni = fields[7]
+                    http_host = fields[8]
+                    http_uri = fields[9]
+                    ftp_cmd = fields[10]
                     
                     # 尝试从不同协议中获取域名信息
                     domain = None
@@ -180,14 +137,17 @@ class NetworkCollector:
                         domain = http_host
                     elif ftp_cmd:  # FTP流量
                         domain = ip_dst  # FTP使用IP地址作为标识
-                    elif tcp_port or udp_port:  # 其他TCP/UDP流量
-                        domain = ip_dst
+                    elif tcp_dstport == str(self.port) or udp_dstport == str(self.port):
+                        domain = ip_dst  # 目标端口匹配时使用目标IP
+                    elif tcp_srcport == str(self.port) or udp_srcport == str(self.port):
+                        domain = ip_src  # 源端口匹配时使用源IP
                     
-                    if domain:  # 如果成功识别域名
+                    if domain and packet_len.isdigit():  # 确保域名和数据包长度有效
+                        bytes_len = int(packet_len)
                         record = TrafficRecord(
                             domain=domain,
-                            bytes_sent=int(packet_len),
-                            bytes_received=0,
+                            bytes_sent=bytes_len if tcp_srcport == str(self.port) or udp_srcport == str(self.port) else 0,
+                            bytes_received=bytes_len if tcp_dstport == str(self.port) or udp_dstport == str(self.port) else 0,
                             timestamp=datetime.now()
                         )
                         if domain not in self._traffic_data:
