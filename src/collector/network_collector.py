@@ -105,13 +105,6 @@ class NetworkCollector:
                 '-e', 'udp.srcport',  # UDP源端口
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
                 '-e', 'http.host',  # HTTP主机名
-                '-e', 'http.request.uri',  # HTTP请求URI
-                '-e', 'dns.qry.name',  # DNS查询域名
-                '-e', 'dns.resp.name',  # DNS响应域名
-                '-e', 'http.request.full_uri',  # 完整HTTP请求URI
-                '-e', 'http.referer',  # HTTP引用页面
-                '-e', 'http2.headers.authority',  # HTTP/2域名
-                '-e', 'ftp.request.command',  # FTP命令
                 '-E', 'separator=\t',  # 设置字段分隔符
                 '-E', 'quote=n',  # 禁用字段引号
                 '-E', 'occurrence=f',  # 只显示第一个匹配项
@@ -121,9 +114,7 @@ class NetworkCollector:
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
                 '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
-                '-o', 'tcp.no_subdissector_on_error:TRUE',  # 错误时不使用子解析器
-                '-o', 'ssl.keylog_file:',  # 禁用SSL密钥日志
-                '-o', 'tcp.check_checksum:FALSE'  # 禁用TCP校验和检查
+                '-o', 'tcp.no_subdissector_on_error:TRUE'  # 错误时不使用子解析器
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
@@ -236,15 +227,14 @@ class NetworkCollector:
                     
                     # 打印每个字段的值，方便调试
                     field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
-                                  'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'http_uri',
-                                  'dns_qry', 'dns_resp', 'http_full_uri']
+                                  'udp_dstport', 'udp_srcport', 'sni', 'http_host']
                     print("字段详细信息:")
                     for i, name in enumerate(field_names):
                         value = fields[i] if i < len(fields) else "<未提供>"
                         print(f"  {name:15} = {value}")
                         
-                    if len(fields) < 13:
-                        print(f"警告: 字段数量不足 (期望13个，实际{len(fields)}个)")
+                    if len(fields) < 9:
+                        print(f"警告: 字段数量不足 (期望9个，实际{len(fields)}个)")
                         continue
                         
                     if not fields[0].strip():
@@ -259,10 +249,6 @@ class NetworkCollector:
                     udp_srcport = fields[6]
                     sni = fields[7]
                     http_host = fields[8]
-                    http_uri = fields[9]
-                    dns_qry = fields[10]
-                    dns_resp = fields[11]
-                    http_full_uri = fields[12]
                     
                     # 尝试从多个字段中获取域名信息
                     domain = None
@@ -271,13 +257,8 @@ class NetworkCollector:
                         domain = sni.strip()
                     elif http_host and http_host.strip():
                         domain = http_host.strip()
-                    # 如果没有找到，尝试DNS查询和响应
-                    elif dns_qry and dns_qry.strip():
-                        domain = dns_qry.strip()
-                    elif dns_resp and dns_resp.strip():
-                        domain = dns_resp.strip()
                     
-                    # 如果仍然没有域名信息，使用IP地址
+                    # 如果没有域名信息，使用IP地址
                     if not domain:
                         port = tcp_dstport or tcp_srcport or udp_dstport or udp_srcport
                         if port == str(self.port):
@@ -287,10 +268,15 @@ class NetworkCollector:
                     
                     if domain and packet_len.isdigit():  # 确保域名和数据包长度有效
                         bytes_len = int(packet_len)
+                        # 判断数据包方向
+                        is_incoming = False
+                        if tcp_dstport == str(self.port) or udp_dstport == str(self.port):
+                            is_incoming = True
+                        
                         record = TrafficRecord(
                             domain=domain,
-                            bytes_sent=bytes_len if port != str(self.port) else 0,
-                            bytes_received=bytes_len if port == str(self.port) else 0,
+                            bytes_sent=0 if is_incoming else bytes_len,
+                            bytes_received=bytes_len if is_incoming else 0,
                             timestamp=datetime.now()
                         )
                         if domain not in self._traffic_data:
