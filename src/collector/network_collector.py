@@ -99,18 +99,32 @@ class NetworkCollector:
             print("tshark进程已准备就绪")
 
             # 从tcpdump读取数据并写入缓冲区
-            while True:
-                data = tcpdump_process.stdout.read1(1024*1024)
-                if not data:
-                    break
-                output_buffer.write(data)
+            try:
+                while True:
+                    data = tcpdump_process.stdout.read1(1024*1024)
+                    if not data:
+                        break
+                    output_buffer.write(data)
+                    # 检查进程状态
+                    if tcpdump_process.poll() is not None:
+                        print("tcpdump进程意外终止")
+                        break
+            except Exception as e:
+                print(f"读取tcpdump数据时发生错误: {str(e)}")
+                return self._traffic_data
                 
             # 关闭tcpdump的stdout
             tcpdump_process.stdout.close()
             
-            # 将缓冲区的数据发送给tshark
+            # 将缓冲区的数据分块发送给tshark
             output_buffer.seek(0)
-            tshark_process.stdin.write(output_buffer.getvalue())
+            chunk_size = 1024 * 1024  # 1MB的块大小
+            while True:
+                chunk = output_buffer.read(chunk_size)
+                if not chunk:
+                    break
+                tshark_process.stdin.write(chunk)
+                tshark_process.stdin.flush()  # 确保数据被立即写入
             tshark_process.stdin.close()
 
             # 显示进度
