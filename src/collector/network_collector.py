@@ -113,12 +113,18 @@ class NetworkCollector:
                 '-e', 'http2.headers.authority',  # HTTP/2域名
                 '-e', 'ftp.request.command',  # FTP命令
                 '-E', 'separator=\t',  # 设置字段分隔符
+                '-E', 'quote=n',  # 禁用字段引号
+                '-E', 'occurrence=f',  # 只显示第一个匹配项
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
                 '-Q',  # 安静模式
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
-                '-o', 'tls.desegment_ssl_application_data:TRUE'  # 启用TLS应用数据重组
+                '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
+                '-o', 'tcp.no_subdissector_on_error:TRUE',  # 错误时不使用子解析器
+                '-o', 'http.ssl.port:443,8443',  # 指定SSL端口
+                '-o', 'ssl.keylog_file:',  # 禁用SSL密钥日志
+                '-o', 'tcp.check_checksum:FALSE'  # 禁用TCP校验和检查
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
             # 直接将tcpdump输出连接到tshark输入
@@ -214,23 +220,37 @@ class NetworkCollector:
         return self._traffic_data
 
     def _process_tshark_output(self, stdout_data):
-        print("处理tshark输出数据...")
+        print("\n开始处理tshark输出数据...")
         record_count = 0
         try:
             print(f"接收到的原始数据大小: {len(stdout_data)} 字节")
-            for line in stdout_data.splitlines():
-                decoded_line = line.decode()
-                print(f"处理数据行: {decoded_line}")
-                fields = decoded_line.strip().split('\t')
-                print(f"解析字段数量: {len(fields)}")
-                
-                # 打印每个字段的值，方便调试
-                field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
-                              'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'http_uri',
-                              'dns_qry', 'dns_resp', 'http_full_uri']
-                for i, (name, value) in enumerate(zip(field_names, fields)):
-                    print(f"字段 {name}: {value}")
-                if len(fields) >= 13:  # 调整为包含所有新增字段
+            lines = stdout_data.splitlines()
+            print(f"总行数: {len(lines)}")
+            
+            for line_num, line in enumerate(lines, 1):
+                print(f"\n处理第 {line_num} 行数据:")
+                try:
+                    decoded_line = line.decode()
+                    print(f"解码后的数据行: {decoded_line}")
+                    fields = decoded_line.strip().split('\t')
+                    print(f"解析出字段数量: {len(fields)}")
+                    
+                    # 打印每个字段的值，方便调试
+                    field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
+                                  'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'http_uri',
+                                  'dns_qry', 'dns_resp', 'http_full_uri']
+                    print("字段详细信息:")
+                    for i, name in enumerate(field_names):
+                        value = fields[i] if i < len(fields) else "<未提供>"
+                        print(f"  {name:15} = {value}")
+                        
+                    if len(fields) < 13:
+                        print(f"警告: 字段数量不足 (期望13个，实际{len(fields)}个)")
+                        continue
+                        
+                    if not fields[0].strip():
+                        print("警告: 数据包长度为空，跳过此记录")
+                        continue
                     packet_len = fields[0]
                     ip_dst = fields[1]
                     ip_src = fields[2]
@@ -247,10 +267,16 @@ class NetworkCollector:
                     
                     # 尝试从多个字段中获取域名信息
                     domain = None
-                    for field in [sni, http_host, dns_qry, dns_resp]:
-                        if field and field.strip():
-                            domain = field.strip()
-                            break
+                    # 优先使用SNI和HTTP主机名
+                    if sni and sni.strip():
+                        domain = sni.strip()
+                    elif http_host and http_host.strip():
+                        domain = http_host.strip()
+                    # 如果没有找到，尝试DNS查询和响应
+                    elif dns_qry and dns_qry.strip():
+                        domain = dns_qry.strip()
+                    elif dns_resp and dns_resp.strip():
+                        domain = dns_resp.strip()
                     
                     # 如果仍然没有域名信息，使用IP地址
                     if not domain:
