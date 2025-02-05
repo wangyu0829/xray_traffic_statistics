@@ -84,17 +84,34 @@ class NetworkCollector:
                 '-Q',  # 安静模式
                 '-o', 'tcp.desegment_tcp_streams:TRUE'  # 启用TCP流重组
             ]
+            # 使用管道来缓存tcpdump的输出
+            import io
+            output_buffer = io.BytesIO()
+            
+            # 启动tshark进程，但暂时不连接stdin
             tshark_process = subprocess.Popen(
                 tshark_cmd,
-                stdin=tcpdump_process.stdout,  # 直接连接到tcpdump的输出
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=1024*1024  # 设置较大的缓冲区
             )
             print("tshark进程已准备就绪")
 
-            # 关闭tcpdump的stdout，避免文件描述符泄漏
+            # 从tcpdump读取数据并写入缓冲区
+            while True:
+                data = tcpdump_process.stdout.read1(1024*1024)
+                if not data:
+                    break
+                output_buffer.write(data)
+                
+            # 关闭tcpdump的stdout
             tcpdump_process.stdout.close()
+            
+            # 将缓冲区的数据发送给tshark
+            output_buffer.seek(0)
+            tshark_process.stdin.write(output_buffer.getvalue())
+            tshark_process.stdin.close()
 
             # 显示进度
             start_time = time.time()
