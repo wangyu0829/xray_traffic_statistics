@@ -106,12 +106,20 @@ class NetworkCollector:
                 '-e', 'tls.handshake.extensions_server_name',  # SNI字段（域名）
                 '-e', 'http.host',  # HTTP主机名
                 '-e', 'http.request.uri',  # HTTP请求URI
+                '-e', 'dns.qry.name',  # DNS查询域名
+                '-e', 'dns.resp.name',  # DNS响应域名
+                '-e', 'http.request.full_uri',  # 完整HTTP请求URI
+                '-e', 'http.referer',  # HTTP引用页面
+                '-e', 'http2.headers.authority',  # HTTP/2域名
                 '-e', 'ftp.request.command',  # FTP命令
                 '-E', 'separator=\t',  # 设置字段分隔符
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
                 '-Q',  # 安静模式
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
+                '-o', 'tls.keylog_file:',  # 禁用TLS密钥日志
+                '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
+                '-o', 'tls.desegment_ssl_application_data:TRUE',  # 启用TLS应用数据重组
                 '-V'  # 显示数据包详细信息
             ]
             print(f"执行tshark命令: {' '.join(tshark_cmd)}")
@@ -217,15 +225,31 @@ class NetworkCollector:
                 print(f"处理数据行: {decoded_line}")
                 fields = decoded_line.strip().split('\t')
                 print(f"解析字段数量: {len(fields)}")
-                if len(fields) >= 5:  # 调整为5个字段
+                if len(fields) >= 13:  # 调整为包含所有新增字段
                     packet_len = fields[0]
                     ip_dst = fields[1]
                     ip_src = fields[2]
-                    port = fields[3]
-                    domain = fields[4] if len(fields) > 4 else None
+                    tcp_dstport = fields[3]
+                    tcp_srcport = fields[4]
+                    udp_dstport = fields[5]
+                    udp_srcport = fields[6]
+                    sni = fields[7]
+                    http_host = fields[8]
+                    http_uri = fields[9]
+                    dns_qry = fields[10]
+                    dns_resp = fields[11]
+                    http_full_uri = fields[12]
                     
-                    # 如果没有域名信息，使用IP地址
+                    # 尝试从多个字段中获取域名信息
+                    domain = None
+                    for field in [sni, http_host, dns_qry, dns_resp]:
+                        if field and field.strip():
+                            domain = field.strip()
+                            break
+                    
+                    # 如果仍然没有域名信息，使用IP地址
                     if not domain:
+                        port = tcp_dstport or tcp_srcport or udp_dstport or udp_srcport
                         if port == str(self.port):
                             domain = ip_dst
                         else:
