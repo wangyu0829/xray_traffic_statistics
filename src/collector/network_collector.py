@@ -31,13 +31,20 @@ class NetworkCollector:
             print(f"执行命令: {' '.join(cmd)}")
 
             # 启动tcpdump进程
-            tcpdump_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=1024*1024  # 设置较大的缓冲区
-            )
-            print("tcpdump进程已启动")
+            try:
+                tcpdump_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=1024*1024  # 设置较大的缓冲区
+                )
+                print("tcpdump进程已启动")
+            except subprocess.TimeoutExpired:
+                print("启动tcpdump进程超时")
+                return self._traffic_data
+            except Exception as e:
+                print(f"启动tcpdump进程失败: {str(e)}")
+                return self._traffic_data
 
             # 准备tshark进程
             tshark_cmd = [
