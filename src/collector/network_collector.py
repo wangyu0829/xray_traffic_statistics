@@ -84,48 +84,18 @@ class NetworkCollector:
                 '-Q',  # 安静模式
                 '-o', 'tcp.desegment_tcp_streams:TRUE'  # 启用TCP流重组
             ]
-            # 使用管道来缓存tcpdump的输出
-            import io
-            output_buffer = io.BytesIO()
-            
-            # 启动tshark进程，但暂时不连接stdin
+            # 直接将tcpdump输出连接到tshark输入
             tshark_process = subprocess.Popen(
                 tshark_cmd,
-                stdin=subprocess.PIPE,
+                stdin=tcpdump_process.stdout,  # 直接连接到tcpdump的输出
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=1024*1024  # 设置较大的缓冲区
             )
             print("tshark进程已准备就绪")
-
-            # 从tcpdump读取数据并写入缓冲区
-            try:
-                while True:
-                    data = tcpdump_process.stdout.read1(1024*1024)
-                    if not data:
-                        break
-                    output_buffer.write(data)
-                    # 检查进程状态
-                    if tcpdump_process.poll() is not None:
-                        print("tcpdump进程意外终止")
-                        break
-            except Exception as e:
-                print(f"读取tcpdump数据时发生错误: {str(e)}")
-                return self._traffic_data
-                
-            # 关闭tcpdump的stdout
-            tcpdump_process.stdout.close()
             
-            # 将缓冲区的数据分块发送给tshark
-            output_buffer.seek(0)
-            chunk_size = 1024 * 1024  # 1MB的块大小
-            while True:
-                chunk = output_buffer.read(chunk_size)
-                if not chunk:
-                    break
-                tshark_process.stdin.write(chunk)
-                tshark_process.stdin.flush()  # 确保数据被立即写入
-            tshark_process.stdin.close()
+            # 关闭父进程中的tcpdump stdout副本
+            tcpdump_process.stdout.close()
 
             # 显示进度
             start_time = time.time()
