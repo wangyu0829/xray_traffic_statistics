@@ -109,14 +109,15 @@ class NetworkCollector:
                 '-e', 'dns.qry.name',  # DNS查询名称
                 '-e', 'http.request.uri',  # HTTP请求URI
                 '-e', 'http.content_type',  # HTTP内容类型
-                '-e', 'media.type',  # 媒体类型
+                '-e', 'http.user_agent',  # HTTP User Agent
+                '-e', 'frame.protocols',  # 协议栈
                 '-E', 'separator=\t',  # 设置字段分隔符
                 '-E', 'header=n',  # 不显示字段头
                 '-E', 'quote=n',  # 禁用字段引号
                 '-E', 'occurrence=f',  # 只显示第一个匹配项
                 '-l',  # 行缓冲模式
                 '-n',  # 不解析主机名
-                '-Y', f'ip && (tcp.port=={self.port} || udp.port=={self.port})',  # 过滤条件
+                '-Y', f'ip',  # 只过滤IP数据包，不限制端口，以捕获所有流量
                 '-o', 'tcp.desegment_tcp_streams:TRUE',  # 启用TCP流重组
                 '-o', 'tls.desegment_ssl_records:TRUE',  # 启用TLS记录重组
                 '-o', 'tls.desegment_ssl_application_data:TRUE'  # 启用TLS应用数据重组
@@ -230,7 +231,7 @@ class NetworkCollector:
                     # 打印每个字段的值，方便调试
                     field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
                                 'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'dns_name',
-                                'http_uri', 'http_content_type', 'media_type']
+                                'http_uri', 'http_content_type', 'http_user_agent', 'frame_protocols']
                     
                     # 安全地获取字段值
                     values = {}
@@ -269,35 +270,69 @@ class NetworkCollector:
 
     def _determine_traffic_type(self, values):
         """确定流量类型"""
-        # 视频流量
-        if any([
-            'video' in (values.get('http_content_type', '')).lower(),
-            'video' in (values.get('media_type', '')).lower()
-        ]):
+        protocols = values.get('frame.protocols', '').lower()
+        content_type = values.get('http_content_type', '').lower()
+        uri = values.get('http_uri', '').lower()
+        user_agent = values.get('http.user_agent', '').lower()
+        
+        # 视频流量特征
+        video_signatures = [
+            'video/', 'mpegurl', 'mp4', 'm3u8', 'dash',  # 内容类型
+            'youtube.com', 'youku.com', 'netflix.com',    # 常见视频网站
+            '/hls/', '/dash/', '/video/', '/stream/',     # URL特征
+            'mediaplayer', 'videoplayback'                # URI特征
+        ]
+        
+        # 音频流量特征
+        audio_signatures = [
+            'audio/', 'mpeg', 'mp3', 'aac', 'ogg',       # 内容类型
+            'spotify.com', 'music.163.com',              # 常见音频网站
+            '/audio/', '/music/', '/stream/'             # URL特征
+        ]
+        
+        # 检查视频流量
+        if any(sig in content_type or sig in uri for sig in video_signatures):
             return 'VIDEO'
             
-        # 音频流量
-        elif any([
-            'audio' in (values.get('http_content_type', '')).lower(),
-            'audio' in (values.get('media_type', '')).lower()
-        ]):
+        # 检查音频流量
+        if any(sig in content_type or sig in uri for sig in audio_signatures):
             return 'AUDIO'
             
+        # 检查流媒体协议
+        if any(proto in protocols for proto in ['rtsp', 'rtp', 'rtcp']):
+            return 'STREAM'
+            
+        # 检查实时通信
+        if any(proto in protocols for proto in ['webrtc', 'stun', 'turn']):
+            return 'REALTIME'
+            
         # Web流量
-        elif any([
-            values.get('http_uri', ''),
-            values.get('http_content_type', '')
-        ]):
+        if 'http' in protocols or values.get('http_uri', ''):
             return 'WEB'
             
         # DNS流量
-        elif values.get('dns_name', ''):
+        if 'dns' in protocols or values.get('dns_name', ''):
             return 'DNS'
             
-        # TLS流量
-        elif values.get('sni', ''):
+        # TLS/加密流量
+        if 'tls' in protocols or values.get('sni', ''):
             return 'TLS'
             
+        # 根据端口判断常见应用类型
+        port = values.get('tcp_dstport', '') or values.get('tcp_srcport', '') or \
+               values.get('udp_dstport', '') or values.get('udp_srcport', '')
+        
+        if port:
+            port = int(port)
+            if port in [80, 443]:
+                return 'WEB'
+            elif port in [53]:
+                return 'DNS'
+            elif port in [1935, 554]:  # RTMP, RTSP
+                return 'STREAM'
+            elif port in [3478, 3479]:  # STUN
+                return 'REALTIME'
+        
         return 'OTHER'
 
     def _get_domain(self, values):
