@@ -218,6 +218,8 @@ class NetworkCollector:
     def _process_tshark_output(self, stdout_data):
         print("\n开始处理tshark输出数据...")
         record_count = 0
+        traffic_type_stats = {}  # 用于统计各类型流量数量
+        
         try:
             print(f"接收到的原始数据大小: {len(stdout_data)} 字节")
             lines = stdout_data.splitlines()
@@ -228,28 +230,25 @@ class NetworkCollector:
                     decoded_line = line.decode()
                     fields = decoded_line.strip().split('\t')
                     
-                    # 打印每个字段的值，方便调试
-                    field_names = ['packet_len', 'ip_dst', 'ip_src', 'tcp_dstport', 'tcp_srcport',
-                                'udp_dstport', 'udp_srcport', 'sni', 'http_host', 'dns_name',
-                                'http_uri', 'http_content_type', 'http_user_agent', 'frame_protocols']
-                    
-                    # 安全地获取字段值
                     values = {}
                     for i, name in enumerate(field_names):
                         values[name] = fields[i].strip() if i < len(fields) and fields[i].strip() else ""
                     
-                    # 确定流量类型
                     traffic_type = self._determine_traffic_type(values)
+                    traffic_type_stats[traffic_type] = traffic_type_stats.get(traffic_type, 0) + 1
                     
-                    # 获取域名
                     domain = self._get_domain(values)
+                    if domain:
+                        print(f"\n处理记录 {line_num}:")
+                        print(f"域名: {domain}")
+                        print(f"流量类型: {traffic_type}")
                     
                     if domain and values['packet_len'].isdigit():
                         bytes_len = int(values['packet_len'])
                         is_incoming = self._is_incoming_traffic(values)
                         
                         record = TrafficRecord(
-                            domain=f"{domain} [{traffic_type}]",  # 在域名后添加流量类型标记
+                            domain=f"{domain} [{traffic_type}]",
                             bytes_sent=0 if is_incoming else bytes_len,
                             bytes_received=bytes_len if is_incoming else 0,
                             timestamp=datetime.now()
@@ -263,7 +262,10 @@ class NetworkCollector:
                     print(f"处理第 {line_num} 行数据时发生错误: {str(e)}")
                     continue
 
-            print(f"解析完成，共处理 {record_count} 条记录")
+            print("\n=== 流量类型统计 ===")
+            for traffic_type, count in traffic_type_stats.items():
+                print(f"{traffic_type}: {count} 条记录")
+            print(f"\n总计处理记录数: {record_count}")
 
         except Exception as e:
             print(f"处理tshark输出数据时发生错误: {str(e)}")
@@ -274,6 +276,12 @@ class NetworkCollector:
         content_type = values.get('http_content_type', '').lower()
         uri = values.get('http_uri', '').lower()
         user_agent = values.get('http.user_agent', '').lower()
+        
+        print("\n--- 流量类型判断详情 ---")
+        print(f"协议栈: {protocols}")
+        print(f"内容类型: {content_type}")
+        print(f"URI: {uri}")
+        print(f"User Agent: {user_agent}")
         
         # 视频流量特征
         video_signatures = [
@@ -291,31 +299,65 @@ class NetworkCollector:
         ]
         
         # 检查视频流量
-        if any(sig in content_type or sig in uri for sig in video_signatures):
-            return 'VIDEO'
+        for sig in video_signatures:
+            if sig in content_type:
+                print(f"发现视频特征(内容类型): {sig}")
+                return 'VIDEO'
+            if sig in uri:
+                print(f"发现视频特征(URI): {sig}")
+                return 'VIDEO'
+            if values.get('http_host', '') and sig in values.get('http_host', '').lower():
+                print(f"发现视频特征(域名): {sig}")
+                return 'VIDEO'
             
         # 检查音频流量
-        if any(sig in content_type or sig in uri for sig in audio_signatures):
-            return 'AUDIO'
+        for sig in audio_signatures:
+            if sig in content_type:
+                print(f"发现音频特征(内容类型): {sig}")
+                return 'AUDIO'
+            if sig in uri:
+                print(f"发现音频特征(URI): {sig}")
+                return 'AUDIO'
+            if values.get('http_host', '') and sig in values.get('http_host', '').lower():
+                print(f"发现音频特征(域名): {sig}")
+                return 'AUDIO'
             
         # 检查流媒体协议
-        if any(proto in protocols for proto in ['rtsp', 'rtp', 'rtcp']):
-            return 'STREAM'
+        streaming_protocols = ['rtsp', 'rtp', 'rtcp', 'quic']
+        for proto in streaming_protocols:
+            if proto in protocols:
+                print(f"发现流媒体协议: {proto}")
+                return 'STREAM'
             
         # 检查实时通信
-        if any(proto in protocols for proto in ['webrtc', 'stun', 'turn']):
-            return 'REALTIME'
+        realtime_protocols = ['webrtc', 'stun', 'turn']
+        for proto in realtime_protocols:
+            if proto in protocols:
+                print(f"发现实时通信协议: {proto}")
+                return 'REALTIME'
             
         # Web流量
-        if 'http' in protocols or values.get('http_uri', ''):
+        if 'http' in protocols:
+            print("发现HTTP协议")
+            return 'WEB'
+        if values.get('http_uri', ''):
+            print("发现HTTP URI")
             return 'WEB'
             
         # DNS流量
-        if 'dns' in protocols or values.get('dns_name', ''):
+        if 'dns' in protocols:
+            print("发现DNS协议")
+            return 'DNS'
+        if values.get('dns_name', ''):
+            print("发现DNS查询")
             return 'DNS'
             
         # TLS/加密流量
-        if 'tls' in protocols or values.get('sni', ''):
+        if 'tls' in protocols:
+            print("发现TLS协议")
+            return 'TLS'
+        if values.get('sni', ''):
+            print("发现SNI字段")
             return 'TLS'
             
         # 根据端口判断常见应用类型
@@ -323,16 +365,25 @@ class NetworkCollector:
                values.get('udp_dstport', '') or values.get('udp_srcport', '')
         
         if port:
-            port = int(port)
-            if port in [80, 443]:
-                return 'WEB'
-            elif port in [53]:
-                return 'DNS'
-            elif port in [1935, 554]:  # RTMP, RTSP
-                return 'STREAM'
-            elif port in [3478, 3479]:  # STUN
-                return 'REALTIME'
+            try:
+                port = int(port)
+                print(f"端口号: {port}")
+                if port in [80, 443]:
+                    print("Web端口")
+                    return 'WEB'
+                elif port in [53]:
+                    print("DNS端口")
+                    return 'DNS'
+                elif port in [1935, 554]:  # RTMP, RTSP
+                    print("流媒体端口")
+                    return 'STREAM'
+                elif port in [3478, 3479]:  # STUN
+                    print("实时通信端口")
+                    return 'REALTIME'
+            except ValueError:
+                pass
         
+        print("未能识别特定类型，标记为OTHER")
         return 'OTHER'
 
     def _get_domain(self, values):
